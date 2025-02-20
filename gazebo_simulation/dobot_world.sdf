@@ -1,0 +1,33 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="zed_world">
+    <include>
+      <uri>/home/tejasmk_tkp/.gazebo/models/sun</uri>
+    </include>
+    <include>
+      <uri>/home/tejasmk_tkp/.gazebo/models/ground_plane</uri>
+    </include>
+
+    <model name="zed2">
+      <static>true</static>  <!-- Camera stays in place -->
+      <link name="zed2_link">
+        <sensor name="zed2_camera" type="camera">
+          <camera>
+            <horizontal_fov>1.57</horizontal_fov> <!-- 90-degree FOV -->
+            <image>
+              <width>1280</width>
+              <height>720</height>
+              <format>R8G8B8</format>
+            </image>
+            <clip>
+              <near>0.1</near>
+              <far>20</far>
+            </clip>
+          </camera>
+          <plugin name="camera_controller" filename="libgazebo_camera_plugin.so"/>
+          <update_rate>30</update_rate>
+        </sensor>
+      </link>
+    </model>
+  </world>
+</sdf>
