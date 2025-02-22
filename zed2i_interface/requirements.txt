@@ -1,0 +1,9 @@
+certifi==2025.1.31
+charset-normalizer==3.4.1
+Cython==3.0.12
+idna==3.10
+numpy==1.26.4
+opencv-python==4.11.0.86
+pyzed @ file:///home/tejasmk-tkp/Documents/my_projects/visual_servoing/zed2i_interface/pyzed-4.2-cp312-cp312-linux_x86_64.whl#sha256=101aaa1ac19308c872623dde15abe6425c2816275c40df7f585b03bd8e7d9492
+requests==2.32.3
+urllib3==2.3.0
