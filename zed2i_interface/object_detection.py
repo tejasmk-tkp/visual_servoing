@@ -54,62 +54,48 @@ def log_object_data(obj):
         print(f"  Height: {dimensions[1]:.3f}")
         print(f"  Width: {dimensions[2]:.3f}")
         
-        # Bounding box information
+        '''# Bounding box information
         bbox = obj.bounding_box
         print("\nBounding Box Corners (3D, meters):")
         for i, point in enumerate(bbox):
-            print(f"  Corner {i+1}: ({point[0]:.3f}, {point[1]:.3f}, {point[2]:.3f})")
+            print(f"  Corner {i+1}: ({point[0]:.3f}, {point[1]:.3f}, {point[2]:.3f})")'''
         
         print("="*50 + "\n")
         
     except Exception as e:
         print(f"Error logging object data: {e}")
 
-def draw_3d_bounding_box(image_ocv, bbox_2d, color):
+def draw_3d_bounding_box(image, bbox_2d, color):
     """
     Draw a 3D bounding box as a cuboid
     """
     try:
-        # Make sure image_ocv is a numpy array
-        if not isinstance(image_ocv, np.ndarray):
-            print("Error: Image is not a numpy array in draw_3d_bounding_box")
-            return
-            
         # Draw bottom rectangle (points 0-3)
         for i in range(4):
             pt1 = tuple(map(int, bbox_2d[i]))
             pt2 = tuple(map(int, bbox_2d[(i + 1) % 4]))
-            cv2.line(image_ocv, pt1, pt2, color, 2)
+            cv2.line(image, pt1, pt2, color, 2)
         
         # Draw top rectangle (points 4-7)
         for i in range(4):
             pt1 = tuple(map(int, bbox_2d[i + 4]))
             pt2 = tuple(map(int, bbox_2d[((i + 1) % 4) + 4]))
-            cv2.line(image_ocv, pt1, pt2, color, 2)
+            cv2.line(image, pt1, pt2, color, 2)
         
         # Draw vertical lines connecting top and bottom rectangles
         for i in range(4):
             pt1 = tuple(map(int, bbox_2d[i]))
             pt2 = tuple(map(int, bbox_2d[i + 4]))
-            cv2.line(image_ocv, pt1, pt2, color, 2)
+            cv2.line(image, pt1, pt2, color, 2)
 
     except Exception as e:
         print(f"Error in draw_3d_bounding_box: {e}")
-        import traceback
-        traceback.print_exc()
 
-def draw_detection_info(image_ocv, obj, camera):
+def draw_detection_info(image, obj, camera):
     """
     Draw bounding boxes and object information on the image using proper 3D-2D projection
     """
     try:
-        # Make sure image_ocv is a numpy array
-        if not isinstance(image_ocv, np.ndarray):
-            print("Error: Image is not a numpy array in draw_detection_info")
-            return
-
-
-            
         # Colors for different detection states
         colors = {
             sl.OBJECT_TRACKING_STATE.OK: (0, 255, 0),        # Green
@@ -126,7 +112,7 @@ def draw_detection_info(image_ocv, obj, camera):
         color = colors.get(obj.tracking_state, colors[sl.OBJECT_TRACKING_STATE.OFF])
 
         # Get image size
-        height, width = image_ocv.shape[:2]
+        height, width = image.shape[:2]
 
         # Get 3D bounding box points and convert to image space
         bbox_3d = obj.bounding_box
@@ -144,7 +130,7 @@ def draw_detection_info(image_ocv, obj, camera):
 
         # Draw the 3D bounding box if we have valid points
         if len(bbox_2d) == 8:  # Make sure we have all 8 points
-            draw_3d_bounding_box(image_ocv, bbox_2d, color)
+            draw_3d_bounding_box(image, bbox_2d, color)
         
             # Draw text information
             text_x = int(bbox_2d[0][0])
@@ -157,7 +143,7 @@ def draw_detection_info(image_ocv, obj, camera):
             
             for i, text in enumerate(info_text):
                 y = text_y - (i * 20)
-                cv2.putText(image_ocv, text, (text_x, y), font, font_scale, color, font_thickness)
+                cv2.putText(image, text, (text_x, y), font, font_scale, color, font_thickness)
             
     except Exception as e:
         print(f"Error drawing detection info: {e}")
@@ -207,7 +193,7 @@ def main():
         obj_runtime_param.detection_confidence_threshold = 40
             
         # Image objects
-        image_zed = sl.Mat()
+        image = sl.Mat()
             
         # Create window for display
         cv2.namedWindow("ZED Object Detection", cv2.WINDOW_NORMAL)
@@ -218,22 +204,9 @@ def main():
         while running:
             if zed.grab() == sl.ERROR_CODE.SUCCESS:
                 # Retrieve image
-                zed.retrieve_image(image_zed, sl.VIEW.LEFT)
-                # Convert ZED Mat to numpy array
-                image_ocv = image_zed.get_data()
-
-                image_ocv = np.array(image_ocv, dtype=np.uint8, copy=True, order='C')
-
-                if image_ocv.shape[-1] == 4:
-                    image_ocv = cv2.cvtColor(image_ocv, cv2.COLOR_RGBA2BGR)
-
-                print(type(image_ocv))
-                print(f"Shape: {image_ocv.shape}")
-                print(f"Dtype: {image_ocv.dtype}")
-                print(f"Is C-contiguous: {image_ocv.flags['C_CONTIGUOUS']}")
-                print(f"Memory location: {image_ocv.__array_interface__['data']}")
-                print(image_ocv)
-
+                zed.retrieve_image(image, sl.VIEW.LEFT)
+                cv_image = image.get_data()
+                    
                 # Retrieve objects
                 zed.retrieve_objects(objects, obj_runtime_param)
                     
@@ -244,24 +217,18 @@ def main():
                         # Log detailed object information
                         log_object_data(obj)
                         # Draw detection information on image
-                        draw_detection_info(image_ocv=image_ocv, obj=obj, camera=zed)
-                
+                        draw_detection_info(cv_image, obj, zed)
+                            
                 # Display the image
-                cv2.imshow("ZED Object Detection", image_ocv)
-
+                cv2.imshow("ZED Object Detection", cv_image)
                 key = cv2.waitKey(1)
                 if key == 27:  # ESC key
                     print("\nESC pressed. Exiting...")
                     running = False
                     break
-
-            else:
-                print("Error: Failed to grab image from ZED camera.")
                 
     except Exception as e:
         print(f"Error in main loop: {e}")
-        import traceback
-        traceback.print_exc()
         
     finally:
         # Clean up
