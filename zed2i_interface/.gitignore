@@ -1,3 +1,4 @@
 .venv
 playground/
 .python-version
+*.pt
