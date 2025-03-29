@@ -4,7 +4,7 @@ import numpy as np
 import signal
 import sys
 from datetime import datetime
-from ultralytics import YOLO
+import traceback
 
 # Global flag for graceful shutdown
 running = True
@@ -15,7 +15,7 @@ def signal_handler(sig, frame):
     print("\nShutdown signal received. Cleaning up...")
     running = False
 
-def log_object_data(obj, class_name="Unknown"):
+def log_object_data(obj, class_name="Green Cube"):
     """
     Log detailed information about detected objects
     """
@@ -32,7 +32,6 @@ def log_object_data(obj, class_name="Unknown"):
         print(f"Timestamp: {timestamp}")
         print(f"Object ID: {obj.id}")
         print(f"Object Class Name: {class_name}")
-        print(f"Label: {obj.raw_label}")
         print(f"Tracking State: {obj.tracking_state}")
         print(f"Confidence: {obj.confidence:.2f}%")
         
@@ -86,7 +85,7 @@ def draw_3d_bounding_box(image, bbox_2d, color):
     except Exception as e:
         print(f"Error in draw_3d_bounding_box: {e}")
 
-def draw_detection_info(image, obj, camera, class_name="Unknown"):
+def draw_detection_info(image, obj, camera, class_name="Green Cube"):
     """
     Draw bounding boxes and object information on the image using proper 3D-2D projection
     """
@@ -142,8 +141,50 @@ def draw_detection_info(image, obj, camera, class_name="Unknown"):
             
     except Exception as e:
         print(f"Error drawing detection info: {e}")
-        import traceback
         traceback.print_exc()
+
+def detect_green_objects(image, min_area=1000):
+    """
+    Detect green objects on yellow background using HSV color filtering
+    Returns bounding boxes in format: [[x1, y1, width, height], ...]
+    """
+    # Convert to HSV color space
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    
+    # Define range for green color (adjust these values based on your specific green shade)
+    # H: 60 is pure green in HSV
+    lower_green = np.array([40, 70, 70])
+    upper_green = np.array([80, 255, 255])
+    
+    # Create a mask for green color
+    mask = cv2.inRange(hsv, lower_green, upper_green)
+    
+    # Optional: Apply morphological operations to remove noise
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    
+    # Find contours
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    # Filter contours by area and extract bounding boxes
+    bounding_boxes = []
+    confidences = []
+    
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area > min_area:
+            x, y, w, h = cv2.boundingRect(contour)
+            bounding_boxes.append([x, y, w, h])
+            
+            # Calculate "confidence" based on the area of the contour
+            # The larger the area, the higher the confidence
+            # Normalize to be between 0 and 1
+            # You may need to adjust the scaling factor
+            confidence = min(1.0, area / 10000)  # Example scaling
+            confidences.append(confidence)
+    
+    return bounding_boxes, confidences, mask
 
 def main():
     global running
@@ -151,8 +192,6 @@ def main():
     # Register signal handlers
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-
-    model = YOLO("yolov8m.pt")
 
     # Create and configure Camera object
     zed = sl.Camera()
@@ -181,12 +220,16 @@ def main():
     obj_param.enable_tracking = True  # 🔥 Required for `instance_id`
     zed.enable_object_detection(obj_param)
     
-    # Create display window
-    cv2.namedWindow("ZED YOLO Object Detection", cv2.WINDOW_NORMAL)
+    # Create display windows
+    cv2.namedWindow("ZED Green Cube Detection", cv2.WINDOW_NORMAL)
+    cv2.namedWindow("Green Mask", cv2.WINDOW_NORMAL)
     
-    print("\nStarting YOLO detection and ingestion loop...")
+    print("\nStarting green color detection and tracking loop...")
     print("Press ESC or Ctrl+C to exit")
     
+    # Dictionary to store tracked objects
+    tracked_objects = {}  
+
     while running:
         if zed.grab() == sl.ERROR_CODE.SUCCESS:
             # Retrieve the left image and depth map
@@ -195,53 +238,32 @@ def main():
             zed.retrieve_measure(depth_zed, sl.MEASURE.DEPTH)
             depth_map = depth_zed.get_data()
 
-            cv_image_rgb = cv2.cvtColor(cv_image, cv2.COLOR_BGRA2BGR)
-            
-            # Run ultralytics YOLO on the image
-            results = model(cv_image_rgb, verbose=False)
-            # Assuming the first result is what we want
-            detections = results[0].boxes  # YOLOBoxes object
-            # The YOLOBoxes object contains xyxy, conf, and cls for each detection
-            boxes = []
-            confidences = []
-            class_ids = []
-            
-            for box in detections.xyxy.cpu().numpy():
-                # box format: [x1, y1, x2, y2]
-                x1, y1, x2, y2 = box.astype(int)
-                w = x2 - x1
-                h = y2 - y1
-                boxes.append([x1, y1, w, h])
-            for conf in detections.conf.cpu().numpy():
-                confidences.append(float(conf))
-            for cls in detections.cls.cpu().numpy():
-                class_ids.append(int(cls))
+            # Convert from BGRA (ZED format) to BGR (OpenCV format)
+            cv_image_bgr = cv2.cvtColor(cv_image, cv2.COLOR_BGRA2BGR)
 
-            # Track instances of detected objects
-            tracked_objects = {}  # Dictionary to store previous object IDs
+            # Detect green objects
+            boxes, confidences, mask = detect_green_objects(cv_image_bgr)
             
             # Create custom box objects for ingestion into ZED
             objects_in = []
 
-            for i, box in enumerate(detections.xyxy.cpu().numpy()):
-                x1, y1, x2, y2 = box.astype(int)
-                w, h = x2 - x1, y2 - y1
-                conf = float(detections.conf[i].cpu().numpy())
-                cls_id = int(detections.cls[i].cpu().numpy())
-                class_name = model.names[cls_id]  # YOLO class name
+            for i, (box, conf) in enumerate(zip(boxes, confidences)):
+                x, y, w, h = box
                 
-                # Convert bounding box to a NumPy array (required by ZED)
+                # Convert bounding box to the format ZED expects (4 points)
                 box_points = np.array([
-                    [x1, y1], [x2, y1],  # Top-left, Top-right
-                    [x2, y2], [x1, y2]   # Bottom-right, Bottom-left
+                    [x, y], [x + w, y],  # Top-left, Top-right
+                    [x + w, y + h], [x, y + h]   # Bottom-right, Bottom-left
                 ], dtype=np.float32)
 
-                # 🔥 Track objects: Reuse instance_id if object is already seen
-                centroid = (x1 + w // 2, y1 + h // 2)  # Use centroid for tracking
+                # Track objects: Reuse instance_id if object is already seen
+                centroid = (x + w // 2, y + h // 2)  # Use centroid for tracking
                 existing_id = None
 
                 for obj_id, prev_centroid in tracked_objects.items():
-                    if np.linalg.norm(np.array(centroid) - np.array(prev_centroid)) < 50:  # Adjust threshold if needed
+                    # Calculate distance between current centroid and previous centroids
+                    distance = np.linalg.norm(np.array(centroid) - np.array(prev_centroid))
+                    if distance < 50:  # Threshold for considering it the same object
                         existing_id = obj_id
                         break
 
@@ -252,16 +274,20 @@ def main():
 
                 tracked_objects[instance_id] = centroid  # Update tracked object position
 
-                # Create and properly initialize the ZED custom box
+                # Create and initialize the ZED custom box
                 custom_box = sl.CustomBoxObjectData()
-                custom_box.unique_object_id = instance_id  # ✅ Now correctly tracked
+                custom_box.unique_object_id = instance_id
                 custom_box.probability = conf * 100.0  # Convert to percentage
-                custom_box.label = cls_id  # Integer class ID
-                class_name = model.names[cls_id]
+                custom_box.label = 1  # Use 1 as the class ID for green cubes
                 custom_box.bounding_box_2d = box_points
-                custom_box.is_grounded = False  # Change to True if objects are on the floor
+                custom_box.is_grounded = True  # Set to True if objects are on the ground
 
                 objects_in.append(custom_box)
+                
+                # Draw the detection on the original image for visualization
+                cv2.rectangle(cv_image_bgr, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.putText(cv_image_bgr, f"Cube: {conf:.2f}", (x, y - 10), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
             # Ingest custom detections into the ZED SDK tracking pipeline
             if objects_in:
@@ -275,10 +301,13 @@ def main():
             
             # Log and display each tracked object
             for obj in objects.object_list:
-                log_object_data(obj, class_name)
-                draw_detection_info(cv_image, obj, zed, class_name)
+                log_object_data(obj)
+                draw_detection_info(cv_image_bgr, obj, zed)
             
-            cv2.imshow("ZED YOLO Object Detection", cv_image)
+            # Show the images
+            cv2.imshow("ZED Green Cube Detection", cv_image_bgr)
+            cv2.imshow("Green Mask", mask)
+            
             key = cv2.waitKey(1)
             if key == 27:  # ESC key
                 print("\nESC pressed. Exiting...")
@@ -291,4 +320,4 @@ def main():
     print("Program finished successfully. Now go kick some ass!")
 
 if __name__ == "__main__":
-    main()  
+    main()

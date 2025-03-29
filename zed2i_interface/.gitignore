@@ -2,3 +2,4 @@
 playground/
 .python-version
 *.pt
+env
