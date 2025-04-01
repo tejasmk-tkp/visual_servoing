@@ -3,15 +3,80 @@ import cv2
 import numpy as np
 import signal
 import sys
+import socket
+import json
+import time
 from datetime import datetime
 
 # Global flag for graceful shutdown
 running = True
 
+# Socket configuration
+SERVER_IP = "192.168.138.179"  # Change to the IP address of the PC running arm_control.py
+SERVER_PORT = 9999
+
+# Socket client
+client_socket = None
+
+def setup_socket():
+    """Establish connection to the arm control server"""
+    global client_socket
+    try:
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_socket.connect((SERVER_IP, SERVER_PORT))
+        print(f"Connected to server at {SERVER_IP}:{SERVER_PORT}")
+        return True
+    except Exception as e:
+        print(f"Socket connection failed: {str(e)}")
+        return False
+
+def send_object_data(position_mm, dimensions_mm, confidence):
+    """Send object data to the arm control server"""
+    global client_socket
+    if client_socket is None:
+        if not setup_socket():
+            return False
+    
+    try:
+        data = {
+            "position": {
+                "x": position_mm[0],
+                "y": position_mm[1],
+                "z": position_mm[2]
+            },
+            "dimensions": {
+                "width": dimensions_mm[0],
+                "height": dimensions_mm[1],
+                "depth": dimensions_mm[2]
+            },
+            "confidence": confidence,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        }
+        
+        # Convert to JSON and send
+        json_data = json.dumps(data)
+        client_socket.send((json_data + "\n").encode())
+        print("Data sent successfully")
+        return True
+    except Exception as e:
+        print(f"Failed to send data: {str(e)}")
+        # Attempt to reconnect
+        try:
+            client_socket.close()
+        except:
+            pass
+        client_socket = None
+        return False
+
 def signal_handler(sig, frame):
-    global running
+    global running, client_socket
     print("\nShutdown signal received. Cleaning up...")
     running = False
+    if client_socket:
+        try:
+            client_socket.close()
+        except:
+            pass
 
 def safe_float_to_mm(value):
     """Safely convert float to millimeters handling all edge cases"""
@@ -87,7 +152,7 @@ def log_cube_data(position_mm, dimensions_mm):
         print("Error logging data")
 
 def main():
-    global running
+    global running, client_socket
     
     # Setup signal handling
     signal.signal(signal.SIGINT, signal_handler)
@@ -101,6 +166,9 @@ def main():
     init_params.coordinate_units = sl.UNIT.METER
     
     try:
+        # Try to connect to server
+        setup_socket()
+        
         # Open camera
         err = zed.open(init_params)
         if err != sl.ERROR_CODE.SUCCESS:
@@ -171,6 +239,11 @@ def main():
                                 # Log cube data
                                 log_cube_data((pos_x_mm, pos_y_mm, pos_z_mm), dimensions_mm)
                                 
+                                # Send data to arm control server
+                                send_object_data((pos_x_mm, pos_y_mm, pos_z_mm), 
+                                                dimensions_mm, 
+                                                float(confidence))
+                                
                                 # Draw detection
                                 cv2.rectangle(cv_image_bgr, (x, y), (x+w, y+h), (0, 255, 0), 2)
                                 cv2.putText(cv_image_bgr, f"X:{pos_x_mm}mm", (x, y-30), 
@@ -193,6 +266,14 @@ def main():
                 continue
 
     finally:
+        # Close socket connection
+        if client_socket:
+            try:
+                client_socket.close()
+                print("Socket connection closed")
+            except:
+                pass
+                
         zed.close()
         cv2.destroyAllWindows()
         print("Tracking stopped.")
