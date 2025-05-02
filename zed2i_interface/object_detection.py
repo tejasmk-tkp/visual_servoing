@@ -12,7 +12,7 @@ from datetime import datetime
 running = True
 
 # Socket configuration
-SERVER_IP = "192.168.138.179"  # Change to the IP address of the PC running arm_control.py
+SERVER_IP = "192.168.146.179"  # Change to the IP address of the PC running arm_control.py
 SERVER_PORT = 9999
 
 # Socket client
